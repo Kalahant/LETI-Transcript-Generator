@@ -27,6 +27,12 @@ app.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'Channel info is required' });
     }
 
+    // Build a messages map for quick lookup
+    const messagesMap = new Map();
+    messages.forEach(msg => {
+      messagesMap.set(msg.id, msg);
+    });
+
     // Build a users map from all messages
     const usersMap = new Map();
     messages.forEach(msg => {
@@ -38,6 +44,13 @@ app.post('/generate', async (req, res) => {
           avatar: msg.author.avatar,
           bot: msg.author.bot || false,
           displayAvatarURL: (options) => {
+            if (msg.author.avatar) {
+              return `https://cdn.discordapp.com/avatars/${msg.author.id}/${msg.author.avatar}.png`;
+            }
+            const defaultIndex = parseInt(msg.author.discriminator || '0') % 5;
+            return `https://cdn.discordapp.com/embed/avatars/${defaultIndex}.png`;
+          },
+          avatarURL: (options) => {
             if (msg.author.avatar) {
               return `https://cdn.discordapp.com/avatars/${msg.author.id}/${msg.author.avatar}.png`;
             }
@@ -60,6 +73,12 @@ app.post('/generate', async (req, res) => {
               avatar: u.avatar,
               bot: false,
               displayAvatarURL: () => {
+                if (u.avatar) {
+                  return `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`;
+                }
+                return `https://cdn.discordapp.com/embed/avatars/0.png`;
+              },
+              avatarURL: () => {
                 if (u.avatar) {
                   return `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`;
                 }
@@ -94,7 +113,24 @@ app.post('/generate', async (req, res) => {
       topic: channel.topic || null,
       isDMBased: () => false,
       isThread: () => false,
-      guild: mockGuild
+      guild: mockGuild,
+      messages: {
+        fetch: async (messageId) => {
+          const rawMsg = messagesMap.get(messageId);
+          if (!rawMsg) return null;
+          
+          const createdAt = new Date(rawMsg.timestamp);
+          return {
+            id: rawMsg.id,
+            content: rawMsg.content || '',
+            createdAt: createdAt,
+            author: usersMap.get(rawMsg.author.id),
+            attachments: [],
+            embeds: [],
+            url: `https://discord.com/channels/${guild?.id || '@me'}/${channel.id}/${rawMsg.id}`
+          };
+        }
+      }
     };
 
     // Convert messages to format the library expects
@@ -131,7 +167,7 @@ app.post('/generate', async (req, res) => {
         editedAt: editedAt,
         editedTimestamp: editedAt ? editedAt.getTime() : null,
         author: usersMap.get(msg.author.id),
-        attachments: attachmentsCollection, // Now works as both array and map
+        attachments: attachmentsCollection,
         stickers: new Map(),
         embeds: (msg.embeds || []).map(embed => ({
           title: embed.title || null,
@@ -197,7 +233,8 @@ app.post('/generate', async (req, res) => {
         },
         guild: mockGuild,
         channel: mockChannel,
-        interaction: null
+        interaction: null,
+        url: `https://discord.com/channels/${guild?.id || '@me'}/${channel.id}/${msg.id}`
       };
     });
 
@@ -224,6 +261,7 @@ app.post('/generate', async (req, res) => {
               username: 'Unknown User',
               discriminator: '0000',
               displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png',
+              avatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png',
               displayName: 'Unknown User',
               tag: 'Unknown User#0000'
             };
