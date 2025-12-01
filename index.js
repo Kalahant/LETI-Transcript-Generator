@@ -27,7 +27,7 @@ app.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'Channel info is required' });
     }
 
-
+    
     const usersMap = new Map();
     messages.forEach(msg => {
       if (msg.author && !usersMap.has(msg.author.id)) {
@@ -49,7 +49,7 @@ app.post('/generate', async (req, res) => {
         });
       }
       
-
+      
       if (msg.mentions) {
         msg.mentions.forEach(u => {
           if (!usersMap.has(u.id)) {
@@ -73,7 +73,7 @@ app.post('/generate', async (req, res) => {
       }
     });
 
-
+    
     const mockGuild = guild ? {
       id: guild.id,
       name: guild.name,
@@ -86,7 +86,7 @@ app.post('/generate', async (req, res) => {
       }
     } : null;
 
-
+    
     const mockChannel = {
       id: channel.id,
       name: channel.name,
@@ -122,6 +122,7 @@ app.post('/generate', async (req, res) => {
           height: att.height || null,
           contentType: att.content_type || null
         }])),
+        stickers: new Map(), 
         embeds: (msg.embeds || []).map(embed => ({
           title: embed.title || null,
           description: embed.description || null,
@@ -137,14 +138,28 @@ app.post('/generate', async (req, res) => {
         mentions: {
           users: new Map((msg.mentions || []).map(u => [u.id, usersMap.get(u.id)])),
           roles: new Map((msg.mention_roles || []).map(r => [r, { id: r, name: '@role' }])),
-          everyone: false
+          everyone: false,
+          channels: new Map() 
         },
+        mentionEveryone: false, 
+        tts: false, 
+        nonce: null, 
         pinned: msg.pinned || false,
+        webhookId: null, 
+        activity: null, 
+        application: null, 
+        applicationId: null, 
+        messageReference: msg.reference ? {
+          messageId: msg.reference.message_id,
+          channelId: msg.reference.channel_id,
+          guildId: msg.reference.guild_id
+        } : null,
         reference: msg.reference ? {
           messageId: msg.reference.message_id,
           channelId: msg.reference.channel_id,
           guildId: msg.reference.guild_id
         } : null,
+        flags: 0, 
         reactions: {
           cache: new Map((msg.reactions || []).map((r, i) => [`${i}`, {
             emoji: {
@@ -155,6 +170,7 @@ app.post('/generate', async (req, res) => {
             count: r.count || 0
           }]))
         },
+        components: [], 
         system: false,
         member: {
           displayName: msg.author.displayName || msg.author.username,
@@ -166,9 +182,12 @@ app.post('/generate', async (req, res) => {
               color: 0
             }
           },
-          displayColor: 0
+          displayColor: 0,
+          displayHexColor: '#000000'
         },
-        guild: mockGuild
+        guild: mockGuild,
+        channel: mockChannel, 
+        interaction: null 
       };
     });
 
@@ -185,6 +204,7 @@ app.post('/generate', async (req, res) => {
           resolveChannel: (channelId) => {
             return {
               id: channelId,
+              name: 'channel',
               toString: () => `#channel-${channelId}`
             };
           },
@@ -194,14 +214,16 @@ app.post('/generate', async (req, res) => {
               username: 'Unknown User',
               discriminator: '0000',
               displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png',
+              displayName: 'Unknown User',
               tag: 'Unknown User#0000'
             };
           },
           resolveRole: (roleId) => {
             return {
               id: roleId,
-              name: '@role',
-              color: 0
+              name: 'role',
+              color: 0,
+              hexColor: '#000000'
             };
           }
         }
