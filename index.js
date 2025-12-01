@@ -5,9 +5,16 @@ const discordTranscripts = require('discord-html-transcripts');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// Increase payload limits and timeouts
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
+
+// Increase server timeout
+const server = app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+server.timeout = 300000; // 5 minutes
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -16,6 +23,9 @@ app.get('/', (req, res) => {
 
 // Generate transcript endpoint
 app.post('/generate', async (req, res) => {
+  // Set response timeout
+  req.setTimeout(300000); // 5 minutes
+  
   try {
     const { messages, channel, guild } = req.body;
 
@@ -27,6 +37,8 @@ app.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'Channel info is required' });
     }
 
+    console.log(`Generating transcript for ${messages.length} messages...`);
+
     // Build a messages map for quick lookup
     const messagesMap = new Map();
     messages.forEach(msg => {
@@ -37,72 +49,66 @@ app.post('/generate', async (req, res) => {
     const usersMap = new Map();
     messages.forEach(msg => {
       if (msg.author && !usersMap.has(msg.author.id)) {
-        usersMap.set(msg.author.id, {
+        const authorData = {
           id: msg.author.id,
           username: msg.author.username,
           discriminator: msg.author.discriminator || '0',
           avatar: msg.author.avatar,
           bot: msg.author.bot || false,
-          displayAvatarURL: (options) => {
-            if (msg.author.avatar) {
-              return `https://cdn.discordapp.com/avatars/${msg.author.id}/${msg.author.avatar}.png`;
-            }
-            const defaultIndex = parseInt(msg.author.discriminator || '0') % 5;
-            return `https://cdn.discordapp.com/embed/avatars/${defaultIndex}.png`;
-          },
-          avatarURL: (options) => {
-            if (msg.author.avatar) {
-              return `https://cdn.discordapp.com/avatars/${msg.author.id}/${msg.author.avatar}.png`;
-            }
-            const defaultIndex = parseInt(msg.author.discriminator || '0') % 5;
-            return `https://cdn.discordapp.com/embed/avatars/${defaultIndex}.png`;
-          },
           displayName: msg.author.displayName || msg.author.username,
           tag: `${msg.author.username}#${msg.author.discriminator || '0000'}`
-        });
+        };
+        
+        // Add avatar methods
+        authorData.displayAvatarURL = (options) => {
+          if (msg.author.avatar) {
+            return `https://cdn.discordapp.com/avatars/${msg.author.id}/${msg.author.avatar}.png`;
+          }
+          const defaultIndex = parseInt(msg.author.discriminator || '0') % 5;
+          return `https://cdn.discordapp.com/embed/avatars/${defaultIndex}.png`;
+        };
+        
+        authorData.avatarURL = authorData.displayAvatarURL;
+        
+        usersMap.set(msg.author.id, authorData);
       }
       
       // Add mentioned users
       if (msg.mentions) {
         msg.mentions.forEach(u => {
           if (!usersMap.has(u.id)) {
-            usersMap.set(u.id, {
+            const userData = {
               id: u.id,
               username: u.username,
               discriminator: u.discriminator || '0',
               avatar: u.avatar,
               bot: false,
-              displayAvatarURL: () => {
-                if (u.avatar) {
-                  return `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`;
-                }
-                return `https://cdn.discordapp.com/embed/avatars/0.png`;
-              },
-              avatarURL: () => {
-                if (u.avatar) {
-                  return `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`;
-                }
-                return `https://cdn.discordapp.com/embed/avatars/0.png`;
-              },
               displayName: u.username,
               tag: `${u.username}#${u.discriminator || '0000'}`
-            });
+            };
+            
+            userData.displayAvatarURL = () => {
+              if (u.avatar) {
+                return `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`;
+              }
+              return `https://cdn.discordapp.com/embed/avatars/0.png`;
+            };
+            
+            userData.avatarURL = userData.displayAvatarURL;
+            
+            usersMap.set(u.id, userData);
           }
         });
       }
     });
 
-    // Create mock guild with users cache
+    // Create mock guild
     const mockGuild = guild ? {
       id: guild.id,
       name: guild.name,
       iconURL: () => guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png` : null,
-      members: {
-        cache: usersMap
-      },
-      roles: {
-        cache: new Map()
-      }
+      members: { cache: usersMap },
+      roles: { cache: new Map() }
     } : null;
 
     // Create mock channel
@@ -119,11 +125,10 @@ app.post('/generate', async (req, res) => {
           const rawMsg = messagesMap.get(messageId);
           if (!rawMsg) return null;
           
-          const createdAt = new Date(rawMsg.timestamp);
           return {
             id: rawMsg.id,
             content: rawMsg.content || '',
-            createdAt: createdAt,
+            createdAt: new Date(rawMsg.timestamp),
             author: usersMap.get(rawMsg.author.id),
             attachments: [],
             embeds: [],
@@ -133,12 +138,14 @@ app.post('/generate', async (req, res) => {
       }
     };
 
+    console.log('Processing messages...');
+
     // Convert messages to format the library expects
     const processedMessages = messages.map(msg => {
       const createdAt = new Date(msg.timestamp);
       const editedAt = msg.edited_timestamp ? new Date(msg.edited_timestamp) : null;
 
-      // Convert attachments to Collection-like structure with both Map and Array methods
+      // Convert attachments
       const attachmentsArray = (msg.attachments || []).map(att => ({
         id: att.id,
         name: att.filename,
@@ -150,7 +157,6 @@ app.post('/generate', async (req, res) => {
         contentType: att.content_type || null
       }));
 
-      // Make it work as both array and map
       const attachmentsCollection = Object.assign(attachmentsArray, {
         get: (id) => attachmentsArray.find(a => a.id === id),
         has: (id) => attachmentsArray.some(a => a.id === id),
@@ -223,10 +229,7 @@ app.post('/generate', async (req, res) => {
           nickname: msg.author.displayName !== msg.author.username ? msg.author.displayName : null,
           roles: {
             cache: new Map(),
-            highest: {
-              position: 0,
-              color: 0
-            }
+            highest: { position: 0, color: 0 }
           },
           displayColor: 0,
           displayHexColor: '#000000'
@@ -238,23 +241,23 @@ app.post('/generate', async (req, res) => {
       };
     });
 
-    // Generate transcript with callbacks option
+    console.log('Generating transcript HTML...');
+
+    // Generate transcript
     const transcript = await discordTranscripts.generateFromMessages(
       processedMessages,
       mockChannel,
       {
         returnType: 'string',
         filename: `transcript-${channel.name}.html`,
-        saveImages: true,
+        saveImages: false, // Changed to false to speed up generation
         poweredBy: false,
         callbacks: {
-          resolveChannel: (channelId) => {
-            return {
-              id: channelId,
-              name: 'channel',
-              toString: () => `#channel-${channelId}`
-            };
-          },
+          resolveChannel: (channelId) => ({
+            id: channelId,
+            name: 'channel',
+            toString: () => `#channel-${channelId}`
+          }),
           resolveUser: (userId) => {
             return usersMap.get(userId) || {
               id: userId,
@@ -266,17 +269,17 @@ app.post('/generate', async (req, res) => {
               tag: 'Unknown User#0000'
             };
           },
-          resolveRole: (roleId) => {
-            return {
-              id: roleId,
-              name: 'role',
-              color: 0,
-              hexColor: '#000000'
-            };
-          }
+          resolveRole: (roleId) => ({
+            id: roleId,
+            name: 'role',
+            color: 0,
+            hexColor: '#000000'
+          })
         }
       }
     );
+
+    console.log('Transcript generated successfully!');
 
     // Return HTML
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -290,8 +293,4 @@ app.post('/generate', async (req, res) => {
       stack: error.stack
     });
   }
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
