@@ -22,10 +22,15 @@ app.post('/generate-from-messages', async (req, res) => {
     }
 
     try {
-        // Create mock channel object
+        // Create mock channel object with all required methods
         const mockChannel = {
             id: channel.id,
             name: channel.name,
+            isDMBased: () => false,
+            isThread: () => false,
+            isTextBased: () => true,
+            isVoiceBased: () => false,
+            type: 0, // GuildText
             guild: {
                 id: guild.id,
                 name: guild.name,
