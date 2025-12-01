@@ -5,16 +5,16 @@ const discordTranscripts = require('discord-html-transcripts');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-
+// Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-
+// Health check endpoint
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Discord Transcript API is running' });
 });
 
-
+// Generate transcript endpoint
 app.post('/generate', async (req, res) => {
   try {
     const { messages, channel, guild } = req.body;
@@ -27,7 +27,7 @@ app.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'Channel info is required' });
     }
 
-    
+    // Build a users map from all messages
     const usersMap = new Map();
     messages.forEach(msg => {
       if (msg.author && !usersMap.has(msg.author.id)) {
@@ -49,7 +49,7 @@ app.post('/generate', async (req, res) => {
         });
       }
       
-      
+      // Add mentioned users
       if (msg.mentions) {
         msg.mentions.forEach(u => {
           if (!usersMap.has(u.id)) {
@@ -73,7 +73,7 @@ app.post('/generate', async (req, res) => {
       }
     });
 
-    
+    // Create mock guild with users cache
     const mockGuild = guild ? {
       id: guild.id,
       name: guild.name,
@@ -86,7 +86,7 @@ app.post('/generate', async (req, res) => {
       }
     } : null;
 
-    
+    // Create mock channel
     const mockChannel = {
       id: channel.id,
       name: channel.name,
@@ -97,10 +97,29 @@ app.post('/generate', async (req, res) => {
       guild: mockGuild
     };
 
-
+    // Convert messages to format the library expects
     const processedMessages = messages.map(msg => {
       const createdAt = new Date(msg.timestamp);
       const editedAt = msg.edited_timestamp ? new Date(msg.edited_timestamp) : null;
+
+      // Convert attachments to Collection-like structure with both Map and Array methods
+      const attachmentsArray = (msg.attachments || []).map(att => ({
+        id: att.id,
+        name: att.filename,
+        url: att.url,
+        proxyURL: att.url,
+        size: att.size,
+        width: att.width || null,
+        height: att.height || null,
+        contentType: att.content_type || null
+      }));
+
+      // Make it work as both array and map
+      const attachmentsCollection = Object.assign(attachmentsArray, {
+        get: (id) => attachmentsArray.find(a => a.id === id),
+        has: (id) => attachmentsArray.some(a => a.id === id),
+        size: attachmentsArray.length
+      });
 
       return {
         id: msg.id,
@@ -112,17 +131,8 @@ app.post('/generate', async (req, res) => {
         editedAt: editedAt,
         editedTimestamp: editedAt ? editedAt.getTime() : null,
         author: usersMap.get(msg.author.id),
-        attachments: new Map((msg.attachments || []).map(att => [att.id, {
-          id: att.id,
-          name: att.filename,
-          url: att.url,
-          proxyURL: att.url,
-          size: att.size,
-          width: att.width || null,
-          height: att.height || null,
-          contentType: att.content_type || null
-        }])),
-        stickers: new Map(), 
+        attachments: attachmentsCollection, // Now works as both array and map
+        stickers: new Map(),
         embeds: (msg.embeds || []).map(embed => ({
           title: embed.title || null,
           description: embed.description || null,
@@ -139,16 +149,16 @@ app.post('/generate', async (req, res) => {
           users: new Map((msg.mentions || []).map(u => [u.id, usersMap.get(u.id)])),
           roles: new Map((msg.mention_roles || []).map(r => [r, { id: r, name: '@role' }])),
           everyone: false,
-          channels: new Map() 
+          channels: new Map()
         },
-        mentionEveryone: false, 
-        tts: false, 
-        nonce: null, 
+        mentionEveryone: false,
+        tts: false,
+        nonce: null,
         pinned: msg.pinned || false,
-        webhookId: null, 
-        activity: null, 
-        application: null, 
-        applicationId: null, 
+        webhookId: null,
+        activity: null,
+        application: null,
+        applicationId: null,
         messageReference: msg.reference ? {
           messageId: msg.reference.message_id,
           channelId: msg.reference.channel_id,
@@ -159,7 +169,7 @@ app.post('/generate', async (req, res) => {
           channelId: msg.reference.channel_id,
           guildId: msg.reference.guild_id
         } : null,
-        flags: 0, 
+        flags: 0,
         reactions: {
           cache: new Map((msg.reactions || []).map((r, i) => [`${i}`, {
             emoji: {
@@ -170,7 +180,7 @@ app.post('/generate', async (req, res) => {
             count: r.count || 0
           }]))
         },
-        components: [], 
+        components: [],
         system: false,
         member: {
           displayName: msg.author.displayName || msg.author.username,
@@ -186,12 +196,12 @@ app.post('/generate', async (req, res) => {
           displayHexColor: '#000000'
         },
         guild: mockGuild,
-        channel: mockChannel, 
-        interaction: null 
+        channel: mockChannel,
+        interaction: null
       };
     });
 
-
+    // Generate transcript with callbacks option
     const transcript = await discordTranscripts.generateFromMessages(
       processedMessages,
       mockChannel,
@@ -230,7 +240,7 @@ app.post('/generate', async (req, res) => {
       }
     );
 
-
+    // Return HTML
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(transcript);
   } catch (error) {
